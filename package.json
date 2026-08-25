@@ -8,8 +8,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "npm run test:unit && npm run test:e2e",
     "test:unit": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:organized": "playwright test tests/e2e/organized-productivity.spec.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.46.1",
