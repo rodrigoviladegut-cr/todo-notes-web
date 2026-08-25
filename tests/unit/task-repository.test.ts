@@ -3,45 +3,48 @@ import {
   createTaskRepository,
   TASK_STORAGE_KEY,
 } from '../../src/lib/task-repository';
-import type { Task } from '../../src/lib/task-model';
+import { makeTask, makeWorkspace } from './fixtures';
 import { MemoryStorage } from './test-helpers';
 
-const task: Task = {
-  id: 'task-1',
-  text: 'Write tests',
-  completed: false,
-  createdAt: '2026-08-24T10:00:00.000Z',
-  updatedAt: '2026-08-24T10:00:00.000Z',
-};
-
 describe('task repository', () => {
-  it('returns an empty list when no tasks have been saved', () => {
-    expect(createTaskRepository(new MemoryStorage()).read()).toEqual({ ok: true, value: [] });
+  it('returns a default workspace when nothing has been saved', () => {
+    const result = createTaskRepository(new MemoryStorage()).read();
+    expect(result).toMatchObject({
+      ok: true,
+      value: { version: 2, tasks: [], preferences: { theme: 'light', sort: 'manual' } },
+    });
   });
 
-  it('writes and reads a versioned task list', () => {
+  it('writes and reads a versioned workspace', () => {
+    const task = makeTask();
+    const workspace = makeWorkspace([task]);
     const repository = createTaskRepository(new MemoryStorage());
-    expect(repository.write([task])).toEqual({ ok: true, value: undefined });
-    expect(repository.read()).toEqual({ ok: true, value: [task] });
+    expect(repository.write(workspace)).toEqual({ ok: true, value: undefined });
+    expect(repository.read()).toEqual({ ok: true, value: workspace });
+    expect(repository.readTasks()).toEqual({ ok: true, value: [task] });
   });
 
-  it('reports malformed data without overwriting it', () => {
+  it('reports malformed reads and invalid writes without overwriting stored bytes', () => {
     const storage = new MemoryStorage();
-    storage.data.set(TASK_STORAGE_KEY, '{"version":1,"tasks":[{"bad":true}]}');
+    const malformed = '{"version":2,"tasks":[{"bad":true}]}';
+    storage.data.set(TASK_STORAGE_KEY, malformed);
+    const repository = createTaskRepository(storage);
 
-    const result = createTaskRepository(storage).read();
-
-    expect(result.ok).toBe(false);
-    expect(storage.data.get(TASK_STORAGE_KEY)).toContain('"bad":true');
+    expect(repository.read().ok).toBe(false);
+    expect(repository.write({ ...makeWorkspace(), version: 3 } as never).ok).toBe(false);
+    expect(storage.data.get(TASK_STORAGE_KEY)).toBe(malformed);
   });
 
   it('reports read and write failures', () => {
     const storage = new MemoryStorage();
     const repository = createTaskRepository(storage);
     storage.failReads = true;
-    expect(repository.read().ok).toBe(false);
+    expect(repository.read()).toMatchObject({ ok: false, error: expect.stringContaining('left unchanged') });
     storage.failReads = false;
     storage.failWrites = true;
-    expect(repository.write([task]).ok).toBe(false);
+    expect(repository.write(makeWorkspace())).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('could not be saved'),
+    });
   });
 });

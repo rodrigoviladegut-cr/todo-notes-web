@@ -1,46 +1,65 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import ProductivitySummary from './components/ProductivitySummary.svelte';
+  import StorageMessage from './components/StorageMessage.svelte';
   import TaskComposer from './components/TaskComposer.svelte';
   import TaskList from './components/TaskList.svelte';
-  import StorageMessage from './components/StorageMessage.svelte';
+  import TaskToolbar from './components/TaskToolbar.svelte';
+  import TaskViews from './components/TaskViews.svelte';
+  import ThemeToggle from './components/ThemeToggle.svelte';
+  import type { TaskUpdate, Theme, UserPreferences } from './lib/task-model';
+  import { createDefaultPreferences } from './lib/task-preferences';
   import { createTaskRepository } from './lib/task-repository';
-  import {
-    createTaskStore,
-    type TaskStore,
-    type TaskStoreSnapshot,
-  } from './lib/task-store';
+  import { createTaskStore, type TaskStore, type WorkspaceSnapshot } from './lib/task-store';
 
+  const initialPreferences = createDefaultPreferences();
   let store: TaskStore;
-  let state = $state<TaskStoreSnapshot>({ tasks: [], status: 'loading', message: '' });
-  let remaining = $derived(state.tasks.filter((task) => !task.completed).length);
+  let state = $state<WorkspaceSnapshot>({
+    tasks: [],
+    preferences: initialPreferences,
+    visibleTasks: [],
+    statistics: { total: 0, completed: 0, active: 0, overdue: 0, completionPercentage: 0 },
+    status: 'loading',
+    message: '',
+  });
+  let manualReorderEnabled = $derived(
+    state.preferences.sort === 'manual' && state.preferences.view !== 'upcoming',
+  );
+  let viewHeading = $derived(
+    state.preferences.view === 'today'
+      ? "Today's tasks"
+      : state.preferences.view === 'upcoming'
+        ? 'Upcoming tasks'
+        : 'All tasks',
+  );
+
+  $effect(() => {
+    document.body.classList.toggle('theme-dark', state.preferences.theme === 'dark');
+  });
 
   function refresh() {
     state = store.snapshot();
   }
 
+  function mutate(action: () => void) {
+    action();
+    refresh();
+  }
+
   function addTask(text: string) {
-    store.add(text);
-    refresh();
+    mutate(() => { store.add(text); });
   }
 
-  function toggleTask(id: string) {
-    store.toggle(id);
-    refresh();
+  function editTask(id: string, update: string | TaskUpdate) {
+    mutate(() => { store.edit(id, update); });
   }
 
-  function editTask(id: string, text: string) {
-    store.edit(id, text);
-    refresh();
+  function updatePreferences(patch: Partial<UserPreferences>) {
+    mutate(() => { store.updatePreferences(patch); });
   }
 
-  function deleteTask(id: string) {
-    store.remove(id);
-    refresh();
-  }
-
-  function dismissMessage() {
-    store.clearMessage();
-    refresh();
+  function setTheme(theme: Theme) {
+    updatePreferences({ theme });
   }
 
   onMount(() => {
@@ -51,7 +70,7 @@
 </script>
 
 <svelte:head>
-  <title>Field Notes | TODO Notes</title>
+  <title>Field Notes | Productivity Workspace</title>
 </svelte:head>
 
 <main>
@@ -60,38 +79,56 @@
       <span>Field</span>
       <span>Notes</span>
     </a>
-    <p class="issue">Daily list / No. 001</p>
+    <div class="header-tools">
+      <p class="issue">Daily list / Organized</p>
+      <ThemeToggle theme={state.preferences.theme} ontoggle={setTheme} />
+    </div>
   </header>
 
   <section class="intro" aria-labelledby="page-title">
     <p class="eyebrow">A place for the next thing</p>
     <h1 id="page-title">Make room<br />for <em>doing.</em></h1>
     <p class="dek">
-      Keep the day honest. Capture what matters, mark what is done, and leave the noise
-      somewhere else.
+      Capture quickly. Add shape when the work needs it. Keep every useful signal in view.
     </p>
   </section>
 
-  <section class="notebook" aria-label="TODO notes">
+  <ProductivitySummary statistics={state.statistics} />
+
+  <section class="notebook" aria-label="Productivity workspace">
     <TaskComposer oncreate={addTask} />
+    <TaskViews preferences={state.preferences} onupdate={updatePreferences} />
+    <TaskToolbar preferences={state.preferences} onupdate={updatePreferences} />
 
     <div class="list-heading">
-      <h2>Today&rsquo;s notes</h2>
+      <h2>{viewHeading}</h2>
       <p aria-live="polite">
-        {state.tasks.length} {state.tasks.length === 1 ? 'note' : 'notes'} / {remaining} open
+        {state.statistics.total} {state.statistics.total === 1 ? 'note' : 'notes'} /
+        {state.statistics.active} open / {state.visibleTasks.length} shown
       </p>
     </div>
 
-    <StorageMessage message={state.message} ondismiss={dismissMessage} />
+    <p class="visually-hidden" aria-live="polite">
+      {state.message || `${state.visibleTasks.length} tasks are visible.`}
+    </p>
+    <StorageMessage message={state.message} ondismiss={() => mutate(() => store.clearMessage())} />
 
     {#if state.status === 'loading'}
-      <p class="loading" aria-live="polite">Opening your notebook...</p>
+      <p class="loading" aria-live="polite">Opening your workspace...</p>
     {:else}
       <TaskList
-        tasks={state.tasks}
-        ontoggle={toggleTask}
+        tasks={state.visibleTasks}
+        hasAnyTasks={state.tasks.length > 0}
+        {manualReorderEnabled}
+        ontoggle={(id) => mutate(() => store.toggle(id))}
         onedit={editTask}
-        ondelete={deleteTask}
+        ondelete={(id) => mutate(() => store.remove(id))}
+        onreorder={(ids) => mutate(() => store.reorderVisible(ids))}
+        onaddsubtask={(taskId, title) => mutate(() => { store.addSubtask(taskId, title); })}
+        oneditsubtask={(taskId, subtaskId, title) => mutate(() => store.editSubtask(taskId, subtaskId, title))}
+        ontogglesubtask={(taskId, subtaskId) => mutate(() => store.toggleSubtask(taskId, subtaskId))}
+        onremovesubtask={(taskId, subtaskId) => mutate(() => store.removeSubtask(taskId, subtaskId))}
+        onreordersubtasks={(taskId, ids) => mutate(() => store.reorderSubtasks(taskId, ids))}
       />
     {/if}
   </section>
